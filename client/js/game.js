@@ -1,17 +1,12 @@
 export class Game {
     constructor(renderer, webgpu, mapData) {
         this.renderer = renderer;
-        this.webgpu = webgpu; // Store WebGPUSetup instance for context access
+        this.webgpu = webgpu;       // Store WebGPUSetup instance for context access
         this.map = mapData;
-
-        // Initialize camera position
         this.cameraX = 0;
         this.cameraY = 0;
-        // Camera speed (pixels per frame)
         this.cameraSpeed = 5;
-
-        // Add keyboard event listeners
-        this.setupControls();
+        this.setupControls();       // Add keyboard event listeners
     }
 
     setupControls() {
@@ -90,7 +85,7 @@ export class Game {
     
         // Loop through the tiles within the calculated bounds
         for (let row = -10; row < maxRows+10; row++) {
-            for (let col = -5; col < maxCols; col++) {
+            for (let col = -5; col < maxCols+10; col++) {
                 const mapRow = startRow + row;
                 const mapCol = startCol + col;
     
