@@ -1,13 +1,13 @@
 export class Game {
-    constructor(renderer, webgpu, mapData) {
-        this.renderer = renderer;
-        this.webgpu = webgpu;       // Store WebGPUSetup instance for context access
+    constructor(batches, webgpu, mapData) {
+        this.batches = batches;
+        this.webgpu = webgpu;
         this.map = mapData;
         this.cameraX = 0;
         this.cameraY = 0;
         this.cameraSpeed = 5;
-        this.setupControls();       // Add keyboard event listeners
-    }
+        this.setupControls();
+    }    
 
     setupControls() {
         // Track which keys are pressed
@@ -63,61 +63,59 @@ export class Game {
         this.cameraY = Math.max(0, Math.min(this.cameraY, maxY));
     }
 
-    render(texture, treeTexture, renderPass) {
-        const spriteWidth = 32, spriteHeight = 32; // Tile size remains constant (32x32)
+    render(renderPass) {
+        const spriteWidth = 32, spriteHeight = 32;
         const canvasWidth = this.webgpu.getContext().canvas.width;
         const canvasHeight = this.webgpu.getContext().canvas.height;
     
-        // Adjust the number of columns and rows based on the scale factor
         const scaledCanvasWidth = canvasWidth * this.webgpu.scaleFactor;
         const scaledCanvasHeight = canvasHeight * this.webgpu.scaleFactor;
     
-        // Calculate which tile to start rendering from based on camera position
         const startCol = Math.floor(this.cameraX / spriteWidth);
         const startRow = Math.floor(this.cameraY / spriteHeight);
-    
-        // The number of columns and rows that fit in the scaled canvas
         const maxCols = Math.floor(scaledCanvasWidth / spriteWidth)+1;
         const maxRows = Math.floor(scaledCanvasHeight / spriteHeight)+1;
     
-        const spriteData = [];
-        const treeData = [];
+        // Clear data
+        this.batches.forEach(batch => batch.clear());
+
+        const spriteDataForBatch0 = [];
+        const spriteDataForBatch1 = [];
     
-        // Loop through the tiles within the calculated bounds
         for (let row = -10; row < maxRows+10; row++) {
             for (let col = -5; col < maxCols+10; col++) {
                 const mapRow = startRow + row;
                 const mapCol = startCol + col;
     
-                // Ensure we're within map bounds
                 if (
                     mapRow >= 0 &&
                     mapRow < this.map.length &&
                     mapCol >= 0 &&
                     mapCol < this.map[0].length
                 ) {
-                    const tileValue = this.map[mapRow][mapCol][0];  // Get tile from map data
-                    const tile = tileValue - 1;  // Adjust as needed (e.g., sprite index starts at 0)
+                    const tileValue = this.map[mapRow][mapCol][0];
+                    const tile = tileValue - 1;
     
-                    // Calculate tile positions relative to the camera
                     const x = mapCol * spriteWidth - this.cameraX;
                     const y = mapRow * spriteHeight - this.cameraY;
     
-                    // Ensure only valid tiles are rendered
-                    if (tile === 0) { 
-                        spriteData.push({ x, y, tile:7 });
+                    if (tile === 0) {
+                        spriteDataForBatch0.push({ x, y, tile: 7 }); // Grass
                     } else if (tile === 511) {
-                        spriteData.push({x, y, tile: 7});
-                        treeData.push({x: x-240+16,y:y-240+16, tile:0});
-                        treeData.push({x: x-240+16,y:y-240+16, tile:1});
+                        spriteDataForBatch0.push({ x, y, tile: 7 }); // Grass
+                        spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 0 }); // Tree base
+                        spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 1 }); // Tree top
                     }
                 }
             }
         }
     
-        // Draw the tiles in batches
-        this.renderer.drawSpritesBatch(spriteData, texture, renderPass);
-        this.renderer.drawTreeSpritesBatch(treeData, treeTexture, renderPass); // Trees (160x224)
+        // Draw all batches
+        //spriteDataForBatch1.push({ x: 100, y: 100, tile: 0 }); // Tree base
+        //spriteDataForBatch1.push({ x: 400, y: 100, tile: 0 }); // Tree base
+
+        this.batches[0].draw(renderPass, spriteDataForBatch0);
+        this.batches[1].draw(renderPass, spriteDataForBatch1);
     }
-    
+        
 }

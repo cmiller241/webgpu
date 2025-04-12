@@ -41,9 +41,12 @@ export class WebGPUSetup {
     async initialize() {
         this.adapter = await navigator.gpu.requestAdapter();
         this.device = await this.adapter.requestDevice();
+
+        this.format = navigator.gpu.getPreferredCanvasFormat();
+
         this.context.configure({
             device: this.device,
-            format: navigator.gpu.getPreferredCanvasFormat(),
+            format: this.format,
             alphaMode: 'premultiplied',
         });
 
@@ -51,6 +54,27 @@ export class WebGPUSetup {
         this.uniformBuffer = this.device.createBuffer({
             size: 8, // 2 floats (pos.x, pos.y)
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        // Create uniform bind group
+        const uniformBindGroupLayout = this.device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.VERTEX,
+                    buffer: { type: "uniform" }
+                }
+            ]
+        });
+
+        this.uniformBindGroup = this.device.createBindGroup({
+            layout: uniformBindGroupLayout,
+            entries: [
+                {
+                    binding: 0,
+                    resource: { buffer: this.uniformBuffer }
+                }
+            ]
         });
 
         this.resizeCanvas();
@@ -79,83 +103,12 @@ export class WebGPUSetup {
         this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
     }
 
-    async loadShader(url) {
-        const response = await fetch(url);
-        return await response.text();
-    }
-
-    async createPipeline(vertexUrl, fragmentUrl) {
-        const vertexShaderCode = await this.loadShader(vertexUrl);
-        const fragmentShaderCode = await this.loadShader(fragmentUrl);
-
-        const vertexModule = this.device.createShaderModule({ code: vertexShaderCode });
-        const fragmentModule = this.device.createShaderModule({ code: fragmentShaderCode });
-
-        this.bindGroupLayout = this.device.createBindGroupLayout({
-            entries: [
-                { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-                { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-            ],
-        });
-
-        this.uniformBindGroupLayout = this.device.createBindGroupLayout({
-            entries: [
-                { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: {} }, // Only vertex stage needs it now
-            ],
-        });
-
-        const pipelineLayout = this.device.createPipelineLayout({
-            bindGroupLayouts: [this.bindGroupLayout, this.uniformBindGroupLayout],
-        });
-
-        this.pipeline = this.device.createRenderPipeline({
-            layout: pipelineLayout,
-            vertex: {
-                module: vertexModule,
-                entryPoint: 'main',
-                buffers: [{
-                    arrayStride: 16,
-                    attributes: [
-                        { shaderLocation: 0, offset: 0, format: 'float32x2' }, // Position
-                        { shaderLocation: 1, offset: 8, format: 'float32x2' }, // UV
-                    ],
-                }],
-            },
-            fragment: {
-                module: fragmentModule,
-                entryPoint: 'main',
-                targets: [{
-                    format: navigator.gpu.getPreferredCanvasFormat(), 
-                    blend: {
-                        color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-                        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }, // 🔥 FIXED
-                    },
-                }],
-            },
-            primitive: { topology: 'triangle-list' },
-        });
-        
-
-        this.uniformBindGroup = this.device.createBindGroup({
-            layout: this.uniformBindGroupLayout,
-            entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
-        });
-    }
-
     getDevice() {
         return this.device;
     }
 
     getContext() {
         return this.context;
-    }
-
-    getPipeline() {
-        return this.pipeline;
-    }
-
-    getBindGroupLayout() {
-        return this.bindGroupLayout;
     }
 
     getUniformBindGroup() {
