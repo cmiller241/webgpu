@@ -9,6 +9,7 @@ export class SpriteBatch {
         fragmentShaderCode,
         textureData,
         uniformBindGroupLayout, // Accept bind group layout instead of the bind group
+        hasRotation = false, // Add hasRotation parameter
     }) {
         this.device = device;
         this.webgpu = webgpu;
@@ -19,10 +20,11 @@ export class SpriteBatch {
         this.maxSprites = maxSprites;
         this.texture = textureData.texture;
         this.sampler = textureData.sampler;
+        this.hasRotation = hasRotation;
 
         // Create buffer for sprite data (positions, UVs)
         this.buffer = device.createBuffer({
-            size: maxSprites * 6 * 4 * 4, // 6 vertices per sprite, 4 floats per vertex, 4 bytes per float
+            size: maxSprites * 6 * (hasRotation ? 7 : 4) * 4, // 7 floats: pos (2), uv (2), rotation (1), center (2)            
             usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
         });
 
@@ -33,7 +35,7 @@ export class SpriteBatch {
         });
 
         // Create the pipeline (this should be done once per batch)
-        this.pipeline = this._createPipeline(vertexShaderCode, fragmentShaderCode, uniformBindGroupLayout);
+        this.pipeline = this._createPipeline(vertexShaderCode, fragmentShaderCode, uniformBindGroupLayout, hasRotation);
 
         // Create the uniform bind group after the pipeline is created
         this.uniformBindGroup = this.device.createBindGroup({
@@ -52,41 +54,47 @@ export class SpriteBatch {
         this.bindGroup = this._createBindGroup();
     }
 
-    _createPipeline(vertexCode, fragmentCode, uniformBindGroupLayout) {
+    _createPipeline(vertexCode, fragmentCode, uniformBindGroupLayout, hasRotation = false) {
         const shaderModuleVert = this.device.createShaderModule({ code: vertexCode });
         const shaderModuleFrag = this.device.createShaderModule({ code: fragmentCode });
-
-        // Create explicit bind group layouts
+    
         const textureBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
             ],
         });
-
-        // Use the *uniform bind group layout* from the bind group you passed in
+    
         const finalUniformBindGroupLayout = uniformBindGroupLayout ??
             this.device.createBindGroupLayout({
                 entries: [
                     { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
                 ]
             });
-
+    
         const pipelineLayout = this.device.createPipelineLayout({
             bindGroupLayouts: [textureBindGroupLayout, finalUniformBindGroupLayout],
         });
-
+    
+        const vertexAttributes = [
+            { shaderLocation: 0, offset: 0, format: 'float32x2' }, // Position
+            { shaderLocation: 1, offset: 8, format: 'float32x2' }, // UV
+        ];
+        if (hasRotation) {
+            vertexAttributes.push(
+                { shaderLocation: 2, offset: 16, format: 'float32' }, // Rotation
+                { shaderLocation: 3, offset: 20, format: 'float32x2' } // Center
+            );        
+        }
+    
         return this.device.createRenderPipeline({
             layout: pipelineLayout,
             vertex: {
                 module: shaderModuleVert,
                 entryPoint: 'main',
                 buffers: [{
-                    arrayStride: 16,
-                    attributes: [
-                        { shaderLocation: 0, offset: 0, format: 'float32x2' },
-                        { shaderLocation: 1, offset: 8, format: 'float32x2' },
-                    ],
+                    arrayStride: hasRotation ? 28 : 16, // 5 floats (20 bytes) or 4 floats (16 bytes)
+                    attributes: vertexAttributes,
                 }],
             },
             fragment: {
@@ -96,9 +104,9 @@ export class SpriteBatch {
                     format: this.webgpu.format,
                     blend: {
                         color: {
-                            srcFactor: 'src-alpha',   // Source alpha factor
-                            dstFactor: 'one-minus-src-alpha',  // Destination alpha factor
-                            operation: 'add',  // Combine source and destination using "add"
+                            srcFactor: 'src-alpha',
+                            dstFactor: 'one-minus-src-alpha',
+                            operation: 'add',
                         },
                         alpha: {
                             srcFactor: 'src-alpha',
@@ -110,7 +118,6 @@ export class SpriteBatch {
             },
             primitive: { topology: 'triangle-list' },
         });
-        
     }
 
     _createBindGroup() {
@@ -126,42 +133,60 @@ export class SpriteBatch {
 
     draw(renderPass, spriteData) {
         if (!spriteData.length) return;
-
+    
         const canvas = this.webgpu.getContext().canvas;
         const canvasWidth = canvas.width;
         const canvasHeight = canvas.height;
-
-        const vertexData = new Float32Array(spriteData.length * 6 * 4);
+    
+        const floatsPerVertex = this.hasRotation ? 7 : 4;
+        const vertexData = new Float32Array(spriteData.length * 6 * floatsPerVertex);
         for (let i = 0; i < spriteData.length; i++) {
-            const { x, y, tile } = spriteData[i];
-
+            const sprite = spriteData[i];
+            const { x, y, tile, rotation = 0 } = sprite;
+    
             const tilesPerRow = this.sheetWidth / this.spriteWidth;
             const spriteX = (tile % tilesPerRow) * this.spriteWidth;
             const spriteY = Math.floor(tile / tilesPerRow) * this.spriteHeight;
-
+    
             const u0 = spriteX / this.sheetWidth;
             const v0 = spriteY / this.sheetHeight;
             const u1 = u0 + this.spriteWidth / this.sheetWidth;
             const v1 = v0 + this.spriteHeight / this.sheetHeight;
-
+    
             const left = (2 * x / canvasWidth) - 1;
             const right = (2 * (x + this.spriteWidth) / canvasWidth) - 1;
             const top = 1 - (2 * y / canvasHeight);
             const bottom = 1 - (2 * (y + this.spriteHeight) / canvasHeight);
-
-            const offset = i * 24;
-            vertexData.set([
+    
+            // Compute sprite center in NDC
+            const centerX = (2 * (x + this.spriteWidth / 2) / canvasWidth) - 1;
+            const centerY = 1 - (2 * (y + this.spriteHeight / 2) / canvasHeight);
+    
+            const offset = i * 6 * floatsPerVertex;
+            const vertexBase = [
                 left, top, u0, v0,
                 left, bottom, u0, v1,
                 right, bottom, u1, v1,
                 left, top, u0, v0,
                 right, bottom, u1, v1,
                 right, top, u1, v0,
-            ], offset);
+            ];
+            if (this.hasRotation) {
+                vertexData.set([
+                    ...vertexBase.slice(0, 4), rotation, centerX, centerY,
+                    ...vertexBase.slice(4, 8), rotation, centerX, centerY,
+                    ...vertexBase.slice(8, 12), rotation, centerX, centerY,
+                    ...vertexBase.slice(12, 16), rotation, centerX, centerY,
+                    ...vertexBase.slice(16, 20), rotation, centerX, centerY,
+                    ...vertexBase.slice(20, 24), rotation, centerX, centerY,
+                ], offset);
+            } else {
+                vertexData.set(vertexBase, offset);
+            }
         }
-
+    
         this.device.queue.writeBuffer(this.buffer, 0, vertexData);
-
+    
         renderPass.setPipeline(this.pipeline);
         renderPass.setVertexBuffer(0, this.buffer);
         renderPass.setBindGroup(0, this.bindGroup);

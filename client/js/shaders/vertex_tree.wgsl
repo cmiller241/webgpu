@@ -1,5 +1,5 @@
 struct Uniforms {
-    pos: vec2<f32>,  // The translation (position) of the sprite batch
+    pos: vec2<f32>,
 }
 
 @group(1) @binding(0) var<uniform> uniforms: Uniforms;
@@ -11,26 +11,26 @@ struct VertexOutput {
 
 @vertex
 fn main(
-    @location(0) aVertex: vec2<f32>,  // Vertex position
-    @location(1) aUV: vec2<f32>      // Texture coordinate
+    @location(0) aVertex: vec2<f32>,
+    @location(1) aUV: vec2<f32>,
+    @location(2) aRotation: f32,
+    @location(3) aCenter: vec2<f32>
 ) -> VertexOutput {
     var output: VertexOutput;
 
-    // Compute rotation based on X position
-    // scale factor determines how "fast" the rotation changes
-    let scale: f32 = 0.05; // tweak this value to control curve strength
-    let rotationAngle = aVertex.x * scale;
+    // Translate vertex to origin relative to center
+    let translatedVertex = aVertex - aCenter;
 
-    let cosTheta = cos(rotationAngle);
-    let sinTheta = sin(rotationAngle);
-
+    // Apply rotation
+    let cosTheta = cos(aRotation);
+    let sinTheta = sin(aRotation);
     let rotatedVertex = vec2<f32>(
-        cosTheta * aVertex.x - sinTheta * aVertex.y,
-        sinTheta * aVertex.x + cosTheta * aVertex.y
+        cosTheta * translatedVertex.x - sinTheta * translatedVertex.y,
+        sinTheta * translatedVertex.x + cosTheta * translatedVertex.y
     );
 
-    output.position = vec4<f32>(rotatedVertex + uniforms.pos, 0.0, 1.0);
+    // Translate back to final position
+    output.position = vec4<f32>(rotatedVertex + aCenter, 0.0, 1.0);
     output.texCoord = aUV;
     return output;
 }
-

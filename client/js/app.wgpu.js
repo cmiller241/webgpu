@@ -26,7 +26,8 @@ async function init() {
         vertexShaderCode: await fetch('js/shaders/vertex.wgsl').then(r => r.text()),
         fragmentShaderCode: await fetch('js/shaders/fragment.wgsl').then(r => r.text()),
         textureData: grassTextureData,
-        uniformBindGroup: webgpu.getUniformBindGroup()
+        uniformBindGroupLayout: webgpu.getUniformBindGroup().layout, // Pass layout
+        hasRotation: false, // No rotation
     });
     const treeBatch = new SpriteBatch(device, webgpu, {
         spriteWidth: 480,
@@ -34,10 +35,11 @@ async function init() {
         sheetWidth: 1440,
         sheetHeight: 480,
         maxSprites: 5000,
-        vertexShaderCode: await fetch('js/shaders/vertex.wgsl').then(r => r.text()),
+        vertexShaderCode: await fetch('js/shaders/vertex_tree.wgsl').then(r => r.text()),
         fragmentShaderCode: await fetch('js/shaders/fragment.wgsl').then(r => r.text()),
         textureData: treeTextureData,
-        uniformBindGroup: webgpu.getUniformBindGroup()
+        uniformBindGroupLayout: webgpu.getUniformBindGroup().layout,
+        hasRotation: true,
     });
 
     const game = new Game([grassBatch, treeBatch], webgpu, mapData);

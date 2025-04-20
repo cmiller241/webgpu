@@ -73,17 +73,25 @@ export class Game {
     
         const startCol = Math.floor(this.cameraX / spriteWidth);
         const startRow = Math.floor(this.cameraY / spriteHeight);
-        const maxCols = Math.floor(scaledCanvasWidth / spriteWidth)+1;
-        const maxRows = Math.floor(scaledCanvasHeight / spriteHeight)+1;
+        const maxCols = Math.floor(scaledCanvasWidth / spriteWidth) + 1;
+        const maxRows = Math.floor(scaledCanvasHeight / spriteHeight) + 1;
     
         // Clear data
         this.batches.forEach(batch => batch.clear());
-
+    
         const spriteDataForBatch0 = [];
         const spriteDataForBatch1 = [];
     
-        for (let row = -10; row < maxRows+10; row++) {
-            for (let col = -5; col < maxCols+10; col++) {
+        // Get current time in seconds for animation
+        const time = performance.now() / 1000;
+    
+        // Sway parameters
+        const amplitude = 1 * Math.PI / 180; // 20 degrees in radians
+        const frequency = 2; // One full sway cycle every ~4 seconds (2π / 0.5 ≈ 12.56s, but adjust for feel)
+        const phaseScale = 0.1; // Adjusts how much x-position affects the phase (smaller = more uniform)
+    
+        for (let row = -10; row < maxRows + 10; row++) {
+            for (let col = -5; col < maxCols + 10; col++) {
                 const mapRow = startRow + row;
                 const mapCol = startCol + col;
     
@@ -103,17 +111,16 @@ export class Game {
                         spriteDataForBatch0.push({ x, y, tile: 7 }); // Grass
                     } else if (tile === 511) {
                         spriteDataForBatch0.push({ x, y, tile: 7 }); // Grass
-                        spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 0 }); // Tree base
-                        spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 1 }); // Tree top
+                        // Calculate rotation based on x-position and time
+                        const rotation = amplitude * Math.sin(frequency * time + phaseScale * mapCol);
+                        spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 0, rotation }); // Tree base
+                        spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 1, rotation }); // Tree top
                     }
                 }
             }
         }
     
         // Draw all batches
-        //spriteDataForBatch1.push({ x: 100, y: 100, tile: 0 }); // Tree base
-        //spriteDataForBatch1.push({ x: 400, y: 100, tile: 0 }); // Tree base
-
         this.batches[0].draw(renderPass, spriteDataForBatch0);
         this.batches[1].draw(renderPass, spriteDataForBatch1);
     }
