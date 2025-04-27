@@ -1,12 +1,15 @@
 export class Game {
-    constructor(batches, webgpu, mapData) {
+    constructor(batches, webgpu, mapData, computeBatch) {
         this.batches = batches;
         this.webgpu = webgpu;
         this.map = mapData;
+        this.computeBatch = computeBatch; // Store compute batch
         this.cameraX = 0;
         this.cameraY = 0;
         this.cameraSpeed = 5;
         this.setupControls();
+        this.lastTime = performance.now() / 1000;
+        this.time = 0;
     }    
 
     setupControls() {
@@ -56,8 +59,8 @@ export class Game {
         const canvasWidth = this.webgpu.getContext().canvas.width; // Access canvas via WebGPUSetup
         const canvasHeight = this.webgpu.getContext().canvas.height;
 
-        const maxX = (this.map[0].length * spriteWidth) - canvasWidth;
-        const maxY = (this.map.length * spriteHeight) - canvasHeight;
+        const maxX = (this.map[0].length * spriteWidth - canvasWidth) / this.webgpu.scaleFactor;
+        const maxY = (this.map.length * spriteHeight - canvasHeight) / this.webgpu.scaleFactor;
 
         this.cameraX = Math.max(0, Math.min(this.cameraX, maxX));
         this.cameraY = Math.max(0, Math.min(this.cameraY, maxY));
@@ -83,12 +86,15 @@ export class Game {
         const spriteDataForBatch1 = [];
     
         // Get current time in seconds for animation
-        const time = performance.now() / 1000;
+        const currentTime = performance.now() / 1000;
+        const deltaTime = currentTime - this.lastTime;
+        this.lastTime = currentTime;
+        this.time += deltaTime;
     
         // Sway parameters
         const amplitude = 1 * Math.PI / 180; // 20 degrees in radians
         const frequency = 2; // One full sway cycle every ~4 seconds (2π / 0.5 ≈ 12.56s, but adjust for feel)
-        const phaseScale = 0.1; // Adjusts how much x-position affects the phase (smaller = more uniform)
+        const phaseScale = 0.5; // Adjusts how much x-position affects the phase (smaller = more uniform)
     
         for (let row = -10; row < maxRows + 10; row++) {
             for (let col = -5; col < maxCols + 10; col++) {
@@ -107,12 +113,12 @@ export class Game {
                     const x = mapCol * spriteWidth - this.cameraX;
                     const y = mapRow * spriteHeight - this.cameraY;
     
-                    if (tile === 0) {
+                    if (tile < 511) {
                         spriteDataForBatch0.push({ x, y, tile: 7 }); // Grass
                     } else if (tile === 511) {
                         spriteDataForBatch0.push({ x, y, tile: 7 }); // Grass
                         // Calculate rotation based on x-position and time
-                        const rotation = amplitude * Math.sin(frequency * time + phaseScale * mapCol);
+                        const rotation = amplitude * Math.sin(frequency * this.time + phaseScale * mapCol);
                         spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 0, rotation }); // Tree base
                         spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 1, rotation }); // Tree top
                     }
@@ -122,7 +128,11 @@ export class Game {
     
         // Draw all batches
         this.batches[0].draw(renderPass, spriteDataForBatch0);
+                // Draw compute shader texture
+                this.computeBatch.draw(renderPass);
         this.batches[1].draw(renderPass, spriteDataForBatch1);
+
+
     }
         
 }

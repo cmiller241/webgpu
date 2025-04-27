@@ -138,29 +138,37 @@ export class SpriteBatch {
         const canvasWidth = canvas.width;
         const canvasHeight = canvas.height;
     
+        // Precompute loop-invariant values
+        const tilesPerRow = this.sheetWidth / this.spriteWidth;
+        const uScale = this.spriteWidth / this.sheetWidth;
+        const vScale = this.spriteHeight / this.sheetHeight;
+        const xNDCScale = 2 / canvasWidth;
+        const yNDCScale = 2 / canvasHeight;
+        const halfSpriteWidth = this.spriteWidth / 2;
+        const halfSpriteHeight = this.spriteHeight / 2;
         const floatsPerVertex = this.hasRotation ? 7 : 4;
+    
         const vertexData = new Float32Array(spriteData.length * 6 * floatsPerVertex);
         for (let i = 0; i < spriteData.length; i++) {
             const sprite = spriteData[i];
             const { x, y, tile, rotation = 0 } = sprite;
     
-            const tilesPerRow = this.sheetWidth / this.spriteWidth;
             const spriteX = (tile % tilesPerRow) * this.spriteWidth;
             const spriteY = Math.floor(tile / tilesPerRow) * this.spriteHeight;
     
-            const u0 = spriteX / this.sheetWidth;
-            const v0 = spriteY / this.sheetHeight;
-            const u1 = u0 + this.spriteWidth / this.sheetWidth;
-            const v1 = v0 + this.spriteHeight / this.sheetHeight;
+            const u0 = spriteX / this.sheetWidth; // Could be spriteX * uScale
+            const v0 = spriteY / this.sheetHeight; // Could be spriteY * vScale
+            const u1 = u0 + uScale;
+            const v1 = v0 + vScale;
     
-            const left = (2 * x / canvasWidth) - 1;
-            const right = (2 * (x + this.spriteWidth) / canvasWidth) - 1;
-            const top = 1 - (2 * y / canvasHeight);
-            const bottom = 1 - (2 * (y + this.spriteHeight) / canvasHeight);
+            const left = (x * xNDCScale) - 1;
+            const right = ((x + this.spriteWidth) * xNDCScale) - 1;
+            const top = 1 - (y * yNDCScale);
+            const bottom = 1 - ((y + this.spriteHeight) * yNDCScale);
     
             // Compute sprite center in NDC
-            const centerX = (2 * (x + this.spriteWidth / 2) / canvasWidth) - 1;
-            const centerY = 1 - (2 * (y + this.spriteHeight / 2) / canvasHeight);
+            const centerX = ((x + halfSpriteWidth) * xNDCScale) - 1;
+            const centerY = 1 - ((y + halfSpriteHeight) * yNDCScale);
     
             const offset = i * 6 * floatsPerVertex;
             const vertexBase = [

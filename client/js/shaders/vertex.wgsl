@@ -16,7 +16,7 @@ fn main(
     @location(1) aUV: vec2<f32>
 ) -> VertexOutput {
     var output: VertexOutput;
-    output.position = vec4<f32>(aVertex + uniforms.pos, 0.0, 1.0);
+    output.position = vec4<f32>(aVertex, 0.0, 1.0);
     output.texCoord = aUV;
     return output;
 }
