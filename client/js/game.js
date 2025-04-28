@@ -10,6 +10,9 @@ export class Game {
         this.setupControls();
         this.lastTime = performance.now() / 1000;
         this.time = 0;
+        this.plasmaPositions = [
+            { x: 10, y: 10}
+        ];
     }    
 
     setupControls() {
@@ -128,8 +131,9 @@ export class Game {
     
         // Draw all batches
         this.batches[0].draw(renderPass, spriteDataForBatch0);
-                // Draw compute shader texture
-                this.computeBatch.draw(renderPass);
+        // Draw compute shader texture
+        this.computeBatch.draw(renderPass, 700, 100);
+        this.computeBatch.draw(renderPass, this.plasmaPositions);
         this.batches[1].draw(renderPass, spriteDataForBatch1);
 
 

@@ -1,9 +1,13 @@
 struct Uniforms {
-    size: vec2f,     // Size in NDC (width, height)
-    position: vec2f, // Position in NDC (x, y)
+    size: vec2f, // Size in NDC (width, height)
+};
+
+struct Position {
+    pos: vec2f, // Position in NDC (x, y)
 };
 
 @group(0) @binding(2) var<uniform> uniforms: Uniforms;
+@group(0) @binding(3) var<storage, read> positions: array<Position>;
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -11,8 +15,11 @@ struct VertexOutput {
 };
 
 @vertex
-fn main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
-    let positions = array(
+fn main(
+    @builtin(vertex_index) vertexIndex: u32,
+    @builtin(instance_index) instanceIndex: u32
+) -> VertexOutput {
+    let vertexPositions = array(
         vec2f(0.0, 0.0), // Bottom-left
         vec2f(1.0, 0.0), // Bottom-right
         vec2f(0.0, 1.0), // Top-left
@@ -25,9 +32,10 @@ fn main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
         vec2f(1.0, 0.0)  // Top-right
     );
 
-    let pos = positions[vertexIndex];
+    let pos = vertexPositions[vertexIndex];
     var output: VertexOutput;
-    let scaledPos = pos * uniforms.size + uniforms.position;
+    let instancePos = positions[instanceIndex].pos;
+    let scaledPos = pos * uniforms.size + instancePos;
     output.position = vec4f(scaledPos, 0.0, 1.0);
     output.uv = uvs[vertexIndex];
     return output;

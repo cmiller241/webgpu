@@ -14,6 +14,7 @@ async function init() {
 
         const webgpu = new WebGPUSetup('webgpuCanvas');
         await webgpu.initialize();
+        console.log('Canvas size:', webgpu.getContext().canvas.width, webgpu.getContext().canvas.height);
 
         const device = webgpu.getDevice();
         console.log('WebGPU format:', webgpu.format);
