@@ -14,15 +14,18 @@ async function init() {
 
         const webgpu = new WebGPUSetup('webgpuCanvas');
         await webgpu.initialize();
-        console.log('Canvas size:', webgpu.getContext().canvas.width, webgpu.getContext().canvas.height);
+        console.log('Canvas size after init:', webgpu.getContext().canvas.width, webgpu.getContext().canvas.height);
+        console.log('Device pixel ratio:', window.devicePixelRatio);
 
         const device = webgpu.getDevice();
         console.log('WebGPU format:', webgpu.format);
 
+        // Load sprite textures
         const grassTextureData = await loadTexture(device, 'assets/sprites2.png');
         const treeTextureData = await loadTexture(device, 'assets/tree3.png');
-        console.log("Textures loaded");
+        console.log("Sprite textures loaded");
 
+        // Create sprite batches
         const grassBatch = new SpriteBatch(device, webgpu, {
             spriteWidth: 32,
             spriteHeight: 32,
@@ -48,23 +51,74 @@ async function init() {
             hasRotation: true,
         });
 
+        // Load custom texture with target size
+        let customTexture = null;
+        try {
+            const textureData = await loadTexture(device, 'assets/custom_texture.jpg', 512, 512);
+            customTexture = textureData.texture; // Extract GPUTexture
+            console.log('Custom texture loaded:', customTexture, {
+                width: customTexture.width,
+                height: customTexture.height
+            });
+        } catch (error) {
+            console.warn('Failed to load custom texture:', error);
+        }
+
+        // Initialize compute batch after loading custom texture
         console.log("Initializing ComputeTextureBatch...");
-        const computeBatch = new ComputeTextureBatch(device, webgpu, 512, 512);
-        await computeBatch.init(); // Explicitly await init
+        const computeBatch = new ComputeTextureBatch(device, webgpu, 225, 225, 100000, customTexture);
+        await computeBatch.init();
         console.log('ComputeTextureBatch init completed, initialized:', computeBatch.isInitialized());
         if (!computeBatch.isInitialized()) {
             throw new Error('ComputeTextureBatch failed to initialize. Check console for details.');
         }
-        console.log("ComputeTextureBatch initialized successfully");
 
-        const game = new Game([grassBatch, treeBatch], webgpu, mapData, computeBatch);
+        // Load custom compute shader
+        let customComputeShader;
+        try {
+            customComputeShader = await fetch('js/shaders/custom_compute.wgsl').then(r => r.text());
+            await computeBatch.setComputeShader(customComputeShader);
+            console.log('Custom compute shader applied');
+        } catch (error) {
+            console.warn('Failed to load or apply custom compute shader:', error);
+        }
 
-        function gameLoop(time) {
+        // Create game instance with pre-loaded texture
+        const game = new Game([grassBatch, treeBatch], webgpu, mapData, computeBatch, customTexture);
+
+        // FPS calculation variables
+        let lastTime = performance.now();
+        const frameTimes = [];
+        const maxFrameTimes = 60; // Store last 60 frames for moving average
+
+        async function gameLoop(time) {
+            // Calculate FPS
+            const currentTime = performance.now();
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            // Calculate FPS (1000 / deltaTime for frames per second)
+            const fps = deltaTime > 0 ? 1000 / deltaTime : 0;
+            frameTimes.push(fps);
+            if (frameTimes.length > maxFrameTimes) {
+                frameTimes.shift(); // Remove oldest frame
+            }
+
+            // Compute average FPS
+            const avgFps = frameTimes.reduce((sum, fps) => sum + fps, 0) / frameTimes.length;
+
+            // Update FPS display
+            const fpsDisplay = document.getElementById('fpsDisplay');
+            if (fpsDisplay) {
+                fpsDisplay.textContent = `FPS: ${Math.round(avgFps)}`;
+            }
+
             webgpu.updateTime();
             computeBatch.updateTime(time);
 
             const commandEncoder = device.createCommandEncoder();
 
+            // Always run compute pass to apply shader effect
             const computePass = commandEncoder.beginComputePass();
             computeBatch.dispatch(computePass);
             computePass.end();
@@ -72,9 +126,9 @@ async function init() {
             const renderPass = commandEncoder.beginRenderPass({
                 colorAttachments: [{
                     view: webgpu.getContext().getCurrentTexture().createView(),
-                    loadOp: 'load',
+                    loadOp: 'clear', // Clear the framebuffer
                     storeOp: 'store',
-                    clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+                    clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }, // Transparent black
                 }],
             });
 

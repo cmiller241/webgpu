@@ -1,18 +1,27 @@
+import { loadTexture } from './loadTexture.js'; // Keep import for potential future use
+
 export class Game {
-    constructor(batches, webgpu, mapData, computeBatch) {
+    constructor(batches, webgpu, mapData, computeBatch, customTexture = null) {
         this.batches = batches;
         this.webgpu = webgpu;
         this.map = mapData;
-        this.computeBatch = computeBatch; // Store compute batch
+        this.computeBatch = computeBatch;
+        this.customTexture = customTexture; // Store pre-loaded texture
         this.cameraX = 0;
         this.cameraY = 0;
         this.cameraSpeed = 5;
         this.setupControls();
         this.lastTime = performance.now() / 1000;
         this.time = 0;
-        this.plasmaPositions = [
-            { x: 10, y: 10}
-        ];
+        this.plasmaPositions = [];
+        for (let i = 0; i < 10000; i++) {
+            this.plasmaPositions.push({
+                x: Math.random() * (1200 - 64), // Random x within canvas (0 to 256)
+                y: Math.random() * (450 - 64), // Random y within canvas (0 to 256)
+                xSize: 64,
+                ySize: 64
+            });
+        }
     }    
 
     setupControls() {
@@ -59,7 +68,7 @@ export class Game {
         // Optional: Add camera bounds
         const spriteWidth = 32;
         const spriteHeight = 32;
-        const canvasWidth = this.webgpu.getContext().canvas.width; // Access canvas via WebGPUSetup
+        const canvasWidth = this.webgpu.getContext().canvas.width;
         const canvasHeight = this.webgpu.getContext().canvas.height;
 
         const maxX = (this.map[0].length * spriteWidth - canvasWidth) / this.webgpu.scaleFactor;
@@ -95,9 +104,9 @@ export class Game {
         this.time += deltaTime;
     
         // Sway parameters
-        const amplitude = 1 * Math.PI / 180; // 20 degrees in radians
-        const frequency = 2; // One full sway cycle every ~4 seconds (2π / 0.5 ≈ 12.56s, but adjust for feel)
-        const phaseScale = 0.5; // Adjusts how much x-position affects the phase (smaller = more uniform)
+        const amplitude = 1 * Math.PI / 180;
+        const frequency = 2;
+        const phaseScale = 0.5;
     
         for (let row = -10; row < maxRows + 10; row++) {
             for (let col = -5; col < maxCols + 10; col++) {
@@ -120,7 +129,6 @@ export class Game {
                         spriteDataForBatch0.push({ x, y, tile: 7 }); // Grass
                     } else if (tile === 511) {
                         spriteDataForBatch0.push({ x, y, tile: 7 }); // Grass
-                        // Calculate rotation based on x-position and time
                         const rotation = amplitude * Math.sin(frequency * this.time + phaseScale * mapCol);
                         spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 0, rotation }); // Tree base
                         spriteDataForBatch1.push({ x: x - 240 + 16, y: y - 240 + 16, tile: 1, rotation }); // Tree top
@@ -131,12 +139,14 @@ export class Game {
     
         // Draw all batches
         this.batches[0].draw(renderPass, spriteDataForBatch0);
-        // Draw compute shader texture
-        this.computeBatch.draw(renderPass, 700, 100);
-        this.computeBatch.draw(renderPass, this.plasmaPositions);
-        this.batches[1].draw(renderPass, spriteDataForBatch1);
-
-
-    }
         
+        // Draw compute batch with pre-loaded texture (or default if null)
+        if (this.computeBatch.isInitialized()) {
+            this.computeBatch.draw(renderPass, this.plasmaPositions, this.customTexture);
+        } else {
+            console.warn('Compute batch not initialized, skipping draw');
+        }
+        
+        this.batches[1].draw(renderPass, spriteDataForBatch1);
+    }
 }

@@ -2,17 +2,42 @@
 <html>
 <head>
     <style>
-        canvas { width: 100%; height: 100%; image-rendering: pixelated; }
-        body, html { margin:0px; overflow:hidden }
+        canvas {
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+            position: absolute; /* Ensure canvas is positioned */
+            top: 0;
+            left: 0;
+        }
+        body, html {
+            margin: 0;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+        }
+        #fpsDisplay {
+            position: absolute; /* Position above canvas */
+            top: 10px; /* 10px from top */
+            left: 10px; /* 10px from left */
+            z-index: 1000; /* Ensure it’s above canvas */
+            color: white; /* Text color for visibility */
+            background: rgba(0, 0, 0, 0.7); /* Semi-transparent black background */
+            padding: 5px 10px; /* Padding for readability */
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            border-radius: 3px; /* Optional: rounded corners */
+        }
     </style>
 </head>
 <body>
-    <canvas id="webgpuCanvas" width="1231" height="541"></canvas>
+    <canvas id="webgpuCanvas"></canvas>
+    <div id="fpsDisplay">FPS: 0</div>
     <script>
-        // Set initial canvas size before WebGL init
+        // Set canvas size before WebGPU init
         const canvas = document.getElementById('webgpuCanvas');
-        canvas.width = 32*10;
-        canvas.height = 32*10;
+        canvas.width = 32 * 10; // 320
+        canvas.height = 32 * 10; // 320
     </script>
     <script type="module" src="js/app.wgpu.js"></script>
 </body>

@@ -1,12 +1,14 @@
 export class ComputeTextureBatch {
-    constructor(device, webgpu, textureWidth, textureHeight, maxInstances = 100) {
+    constructor(device, webgpu, textureWidth, textureHeight, maxInstances = 1000, texture = null) {
         this.device = device;
         this.webgpu = webgpu;
         this.textureWidth = textureWidth;
         this.textureHeight = textureHeight;
-        this.maxInstances = maxInstances; // Maximum number of quads
+        this.maxInstances = maxInstances;
         this.initialized = false;
         this.initializationError = null;
+        this.providedTexture = texture; // Store provided texture (optional input texture)
+        this.currentComputeShaderCode = null;
 
         this.init().catch(error => {
             console.error('Failed to initialize ComputeTextureBatch:', error);
@@ -23,9 +25,8 @@ export class ComputeTextureBatch {
                 this.setupRenderPipeline(),
             ]);
             if (!computeResult || !renderResult) {
-                throw new Error('Pipeline setup failed: compute or render pipeline returned falsy value');
+                throw new Error('Pipeline setup failed');
             }
-            console.log('Both pipelines set up successfully');
             await this.setupResources();
             this.initialized = true;
             console.log('ComputeTextureBatch initialized successfully');
@@ -36,15 +37,9 @@ export class ComputeTextureBatch {
         }
     }
 
-    async setupComputePipeline() {
+    async setupComputePipeline(computeShaderCode = null) {
         try {
-            console.log('Loading compute.wgsl...');
-            const response = await fetch('js/shaders/compute.wgsl');
-            if (!response.ok) {
-                throw new Error(`Failed to load compute.wgsl: ${response.status} ${response.statusText}`);
-            }
-            const computeShaderCode = await response.text();
-
+            this.currentComputeShaderCode = computeShaderCode || await fetch('js/shaders/custom_compute.wgsl').then(r => r.text());
             this.computeBindGroupLayout = this.device.createBindGroupLayout({
                 entries: [
                     {
@@ -60,6 +55,16 @@ export class ComputeTextureBatch {
                         visibility: GPUShaderStage.COMPUTE,
                         buffer: { type: 'uniform' },
                     },
+                    {
+                        binding: 2,
+                        visibility: GPUShaderStage.COMPUTE,
+                        texture: { sampleType: 'float' }, // Input texture for reading
+                    },
+                    {
+                        binding: 3,
+                        visibility: GPUShaderStage.COMPUTE,
+                        sampler: {}, // Sampler for input texture
+                    },
                 ],
                 label: 'Compute Bind Group Layout',
             });
@@ -70,7 +75,7 @@ export class ComputeTextureBatch {
                 }),
                 compute: {
                     module: this.device.createShaderModule({ 
-                        code: computeShaderCode,
+                        code: this.currentComputeShaderCode,
                         label: 'Compute Shader Module'
                     }),
                     entryPoint: 'main',
@@ -85,21 +90,24 @@ export class ComputeTextureBatch {
         }
     }
 
+    async setComputeShader(computeShaderCode) {
+        try {
+            console.log('Updating compute shader...');
+            this.currentComputeShaderCode = computeShaderCode;
+            await this.setupComputePipeline(computeShaderCode);
+            // Recreate compute bind group to match new pipeline
+            this.updateComputeBindGroup(this.texture, this.inputTexture);
+            console.log('Compute shader updated successfully');
+        } catch (error) {
+            console.error('Error in setComputeShader:', error);
+            throw error;
+        }
+    }
+
     async setupRenderPipeline() {
         try {
-            console.log('Loading texture_vertex.wgsl...');
-            const vertexResponse = await fetch('js/shaders/texture_vertex.wgsl');
-            if (!vertexResponse.ok) {
-                throw new Error(`Failed to load texture_vertex.wgsl: ${vertexResponse.status} ${response.statusText}`);
-            }
-            const vertexShaderCode = await vertexResponse.text();
-
-            console.log('Loading texture_fragment.wgsl...');
-            const fragmentResponse = await fetch('js/shaders/texture_fragment.wgsl');
-            if (!fragmentResponse.ok) {
-                throw new Error(`Failed to load texture_fragment.wgsl: ${fragmentResponse.status} ${response.statusText}`);
-            }
-            const fragmentShaderCode = await fragmentResponse.text();
+            const vertexShaderCode = await fetch('js/shaders/texture_vertex.wgsl').then(r => r.text());
+            const fragmentShaderCode = await fetch('js/shaders/texture_fragment.wgsl').then(r => r.text());
 
             this.renderBindGroupLayout = this.device.createBindGroupLayout({
                 entries: [
@@ -114,14 +122,9 @@ export class ComputeTextureBatch {
                         sampler: {},
                     },
                     {
-                        binding: 2,
-                        visibility: GPUShaderStage.VERTEX,
-                        buffer: { type: 'uniform' }, // For size
-                    },
-                    {
                         binding: 3,
                         visibility: GPUShaderStage.VERTEX,
-                        buffer: { type: 'read-only-storage' }, // For positions
+                        buffer: { type: 'read-only-storage' },
                     },
                 ],
                 label: 'Render Bind Group Layout',
@@ -144,7 +147,21 @@ export class ComputeTextureBatch {
                         label: 'Fragment Shader Module'
                     }),
                     entryPoint: 'main',
-                    targets: [{ format: this.webgpu.format }],
+                    targets: [{
+                        format: this.webgpu.format,
+                        blend: {
+                            color: {
+                                srcFactor: 'src-alpha',
+                                dstFactor: 'one-minus-src-alpha',
+                                operation: 'add',
+                            },
+                            alpha: {
+                                srcFactor: 'src-alpha',
+                                dstFactor: 'one-minus-src-alpha',
+                                operation: 'add',
+                            },
+                        },
+                    }],
                 },
                 primitive: {
                     topology: 'triangle-strip',
@@ -152,7 +169,6 @@ export class ComputeTextureBatch {
                 },
                 label: 'Render Pipeline',
             });
-            console.log('Render pipeline created successfully');
 
             this.sampler = this.device.createSampler({
                 magFilter: 'linear',
@@ -168,69 +184,93 @@ export class ComputeTextureBatch {
 
     async setupResources() {
         try {
-            console.log('Creating compute texture...');
+            // Create output texture (for compute shader to write to)
+            console.log('Creating compute output texture...');
             this.texture = this.device.createTexture({
                 size: [this.textureWidth, this.textureHeight],
                 format: 'rgba8unorm',
-                usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-                label: 'Compute Texture',
+                usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+                label: 'Compute Output Texture',
             });
 
-            console.log('Creating time buffer...');
+            // Use provided texture if available, otherwise create a default input texture
+            console.log('Provided texture:', this.providedTexture);
+            if (this.providedTexture) {
+                this.inputTexture = this.providedTexture;
+                console.log('Using provided texture as input texture', {
+                    width: this.inputTexture.width,
+                    height: this.inputTexture.height
+                });
+            } else {
+                console.log('Creating default input texture...');
+                this.inputTexture = this.device.createTexture({
+                    size: [this.textureWidth, this.textureHeight],
+                    format: 'rgba8unorm',
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                    label: 'Default Input Texture',
+                });
+                // Initialize with a blank texture (white)
+                const blankData = new Uint8Array(this.textureWidth * this.textureHeight * 4).fill(255); // White texture
+                this.device.queue.writeTexture(
+                    { texture: this.inputTexture }, // destination
+                    blankData, // source
+                    { bytesPerRow: this.textureWidth * 4, rowsPerImage: this.textureHeight }, // dataLayout
+                    [this.textureWidth, this.textureHeight] // size
+                );
+            }
+
             this.timeBuffer = this.device.createBuffer({
                 size: 4,
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
                 label: 'Time Uniform Buffer',
             });
 
-            console.log('Creating render uniform buffer...');
-            this.renderUniformBuffer = this.device.createBuffer({
-                size: 8, // vec2f for size only (2 * 4 bytes)
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-                label: 'Render Uniform Buffer',
-            });
-
-            console.log('Creating position storage buffer...');
             this.positionBuffer = this.device.createBuffer({
-                size: this.maxInstances * 8, // vec2f per instance (2 * 4 bytes)
+                size: this.maxInstances * 16,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
                 label: 'Position Storage Buffer',
             });
 
-            console.log('Creating compute bind group...');
-            this.computeBindGroup = this.device.createBindGroup({
-                layout: this.computeBindGroupLayout,
-                entries: [
-                    { binding: 0, resource: this.texture.createView() },
-                    { binding: 1, resource: { buffer: this.timeBuffer } },
-                ],
-                label: 'Compute Bind Group',
-            });
-
-            console.log('Creating render bind group...');
-            this.renderBindGroup = this.device.createBindGroup({
-                layout: this.renderBindGroupLayout,
-                entries: [
-                    { binding: 0, resource: this.texture.createView() },
-                    { binding: 1, resource: this.sampler },
-                    { binding: 2, resource: { buffer: this.renderUniformBuffer } },
-                    { binding: 3, resource: { buffer: this.positionBuffer } },
-                ],
-                label: 'Render Bind Group',
-            });
-
-            console.log('Updating render uniforms...');
-            this.updateRenderUniforms(256, 256); // Set size only
-            console.log('setupResources completed successfully');
+            this.updateComputeBindGroup(this.texture, this.inputTexture);
+            this.updateRenderBindGroup(this.texture);
         } catch (error) {
             console.error('Error in setupResources:', error);
             throw error;
         }
     }
 
+    updateComputeBindGroup(outputTexture, inputTexture) {
+        console.log('Updating compute bind group:', {
+            outputTexture: outputTexture.label,
+            inputTexture: inputTexture.label
+        });
+        this.computeBindGroup = this.device.createBindGroup({
+            layout: this.computeBindGroupLayout,
+            entries: [
+                { binding: 0, resource: outputTexture.createView() }, // Output storage texture
+                { binding: 1, resource: { buffer: this.timeBuffer } }, // Time uniform
+                { binding: 2, resource: inputTexture.createView() }, // Input texture
+                { binding: 3, resource: this.sampler }, // Sampler for input texture
+            ],
+            label: 'Compute Bind Group',
+        });
+    }
+
+    updateRenderBindGroup(texture) {
+        this.renderBindGroup = this.device.createBindGroup({
+            layout: this.renderBindGroupLayout,
+            entries: [
+                { binding: 0, resource: texture.createView() },
+                { binding: 1, resource: this.sampler },
+                { binding: 3, resource: { buffer: this.positionBuffer } },
+            ],
+            label: 'Render Bind Group',
+        });
+    }
+
     updateTime(time) {
         if (!this.initialized || !this.timeBuffer) {
-            console.warn('ComputeTextureBatch not initialized or timeBuffer missing in updateTime', {
+            console.warn('ComputeTextureBatch not initialized or timeBuffer missing', {
                 initialized: this.initialized,
                 timeBuffer: this.timeBuffer,
                 initializationError: this.initializationError,
@@ -240,62 +280,37 @@ export class ComputeTextureBatch {
         this.device.queue.writeBuffer(this.timeBuffer, 0, new Float32Array([time / 1000]));
     }
 
-    updateRenderUniforms(width, height) {
-        if (!this.renderUniformBuffer) {
-            console.warn('renderUniformBuffer missing in updateRenderUniforms', {
-                initialized: this.initialized,
-                renderUniformBuffer: this.renderUniformBuffer,
-            });
-            return;
-        }
-        const canvasWidth = this.webgpu.getContext().canvas.width;
-        const canvasHeight = this.webgpu.getContext().canvas.height;
-        if (canvasWidth === 0 || canvasHeight === 0) {
-            console.warn('Canvas has zero width or height in updateRenderUniforms');
-            return;
-        }
-        const size = new Float32Array([
-            width / canvasWidth * 2,
-            height / canvasHeight * 2,
-        ]);
-        console.log('Updating render uniforms:', { width, height, size });
-        this.device.queue.writeBuffer(this.renderUniformBuffer, 0, size);
-    }
-
     updatePositions(positions) {
         if (!this.positionBuffer) {
             console.warn('positionBuffer missing in updatePositions');
-            return;
+            return 0;
         }
         const canvasWidth = this.webgpu.getContext().canvas.width;
         const canvasHeight = this.webgpu.getContext().canvas.height;
         if (canvasWidth === 0 || canvasHeight === 0) {
             console.warn('Canvas has zero width or height in updatePositions');
-            return;
+            return 0;
         }
-        console.log('Canvas size:', canvasWidth, canvasHeight); // Debug canvas size
         if (positions.length > this.maxInstances) {
             console.warn(`Too many instances: ${positions.length} exceeds maxInstances ${this.maxInstances}`);
             positions = positions.slice(0, this.maxInstances);
         }
-        const textureHeight = 256; // Fixed texture height in pixels
-        const positionData = new Float32Array(positions.length * 2);
+        const positionData = new Float32Array(positions.length * 4);
         for (let i = 0; i < positions.length; i++) {
-            // Convert x from [0, canvasWidth] to [-1, +1] (left edge)
-            positionData[i * 2] = (positions[i].x / canvasWidth) * 2 - 1;
-            // Convert y from top edge to NDC, adjusting for quad center
-            const centerY = positions[i].y + textureHeight / 2; // Quad center in pixel space
-            positionData[i * 2 + 1] = 1 - (centerY / canvasHeight) * 2; // Map to [+1, -1]
-            console.log('Position', i, 'x:', positions[i].x, 'y:', positions[i].y, 'centerY:', centerY, 'NDC:', positionData[i * 2], positionData[i * 2 + 1]);
+            const centerX = positions[i].x + positions[i].xSize / 2;
+            const centerY = positions[i].y + positions[i].ySize / 2;
+            positionData[i * 4] = (centerX / canvasWidth) * 2 - 1;
+            positionData[i * 4 + 1] = 1 - (centerY / canvasHeight) * 2;
+            positionData[i * 4 + 2] = positions[i].xSize / canvasWidth * 2;
+            positionData[i * 4 + 3] = positions[i].ySize / canvasHeight * 2;
         }
-        console.log('Updating positions:', positions, positionData);
         this.device.queue.writeBuffer(this.positionBuffer, 0, positionData);
-        return positions.length; // Return instance count
+        return positions.length;
     }
 
     dispatch(computePass) {
         if (!this.initialized || !this.computePipeline || !this.computeBindGroup) {
-            console.warn('ComputeTextureBatch not initialized or missing compute resources in dispatch', {
+            console.warn('ComputeTextureBatch not initialized or missing compute resources', {
                 initialized: this.initialized,
                 computePipeline: this.computePipeline,
                 computeBindGroup: this.computeBindGroup,
@@ -311,9 +326,9 @@ export class ComputeTextureBatch {
         );
     }
 
-    draw(renderPass, positions) {
+    draw(renderPass, positions, texture = null) {
         if (!this.initialized || !this.renderPipeline || !this.renderBindGroup) {
-            console.warn('ComputeTextureBatch not initialized or missing render resources in draw', {
+            console.warn('ComputeTextureBatch not initialized or missing render resources', {
                 initialized: this.initialized,
                 renderPipeline: this.renderPipeline,
                 renderBindGroup: this.renderBindGroup,
@@ -325,10 +340,24 @@ export class ComputeTextureBatch {
             console.warn('No valid positions provided to draw');
             return;
         }
+
+        // Use output texture (compute result) for rendering
+        const drawTexture = this.texture; // Always render the compute output
+        if (!drawTexture) {
+            console.warn('No valid texture provided for draw');
+            return;
+        }
+
         const instanceCount = this.updatePositions(positions);
+        if (instanceCount === 0) {
+            console.warn('No instances to draw after updatePositions');
+            return;
+        }
+
+        this.device.queue.writeBuffer(this.timeBuffer, 0, new Float32Array([performance.now() / 1000]));
         renderPass.setPipeline(this.renderPipeline);
         renderPass.setBindGroup(0, this.renderBindGroup);
-        renderPass.draw(4, instanceCount); // 4 vertices, multiple instances
+        renderPass.draw(4, instanceCount);
     }
 
     isInitialized() {
