@@ -54,7 +54,7 @@ async function init() {
         // Load custom texture with target size
         let customTexture = null;
         try {
-            const textureData = await loadTexture(device, 'assets/custom_texture.jpg', 512, 512);
+            const textureData = await loadTexture(device, 'assets/hero.png', 112, 112);
             customTexture = textureData.texture; // Extract GPUTexture
             console.log('Custom texture loaded:', customTexture, {
                 width: customTexture.width,
@@ -66,7 +66,7 @@ async function init() {
 
         // Initialize compute batch after loading custom texture
         console.log("Initializing ComputeTextureBatch...");
-        const computeBatch = new ComputeTextureBatch(device, webgpu, 225, 225, 100000, customTexture);
+        const computeBatch = new ComputeTextureBatch(device, webgpu, 112, 112, 10000, customTexture);
         await computeBatch.init();
         console.log('ComputeTextureBatch init completed, initialized:', computeBatch.isInitialized());
         if (!computeBatch.isInitialized()) {

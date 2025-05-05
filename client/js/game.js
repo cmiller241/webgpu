@@ -13,15 +13,24 @@ export class Game {
         this.setupControls();
         this.lastTime = performance.now() / 1000;
         this.time = 0;
+        // this.plasmaPositions = [];
+        // this.plasmaPositions.push({
+        //     x: 200, // Random x within canvas (0 to 256)
+        //     y: 200, // Random y within canvas (0 to 256)
+        //     xSize: 112,
+        //     ySize: 112
+        // });
         this.plasmaPositions = [];
-        for (let i = 0; i < 10000; i++) {
+        for (let i = 0; i < 300; i++) {
             this.plasmaPositions.push({
-                x: Math.random() * (1200 - 64), // Random x within canvas (0 to 256)
-                y: Math.random() * (450 - 64), // Random y within canvas (0 to 256)
-                xSize: 64,
-                ySize: 64
+                x: 1 + Math.random() * 1199, // Random x from 1 to 1200
+                y: 1 + Math.random() * 500,  // Random y from 1 to 800
+                xSize: 112,                  // Fixed sprite width
+                ySize: 112                   // Fixed sprite height
             });
         }
+
+        this.plasmaPositions.sort((a, b) => a.y - b.y);
     }    
 
     setupControls() {

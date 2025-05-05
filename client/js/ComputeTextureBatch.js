@@ -171,8 +171,8 @@ export class ComputeTextureBatch {
             });
 
             this.sampler = this.device.createSampler({
-                magFilter: 'linear',
-                minFilter: 'linear',
+                magFilter: 'nearest',
+                minFilter: 'nearest',
                 label: 'Sampler',
             });
             return true;
