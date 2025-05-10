@@ -49,11 +49,11 @@ export class Game {
     
             // Handle scaleFactor adjustments
             if (e.key === 'z') {
-                let newScale = Math.min(this.webgpu.scaleFactor + .1, 4);
+                let newScale = Math.min(this.webgpu.scaleFactor + .05, 4);
                 this.webgpu.setScaleFactor(newScale);
                 console.log(`scaleFactor increased to: ${newScale}`);
             } else if (e.key === 'x') {
-                let newScale = Math.max(this.webgpu.scaleFactor - .1, 1);
+                let newScale = Math.max(this.webgpu.scaleFactor - .05, 1);
                 this.webgpu.setScaleFactor(newScale);
                 console.log(`scaleFactor decreased to: ${newScale}`);
             }
