@@ -20,10 +20,11 @@ async function init() {
         const device = webgpu.getDevice();
         console.log('WebGPU format:', webgpu.format);
 
-        // Load sprite textures
+        // Grouped texture loading
         const grassTextureData = await loadTexture(device, 'assets/sprites2.png');
         const treeTextureData = await loadTexture(device, 'assets/tree3.png');
-        console.log("Sprite textures loaded");
+        const heroTextureData = await loadTexture(device, 'assets/hero.png', 120, 120);
+        console.log("All textures loaded");
 
         // Create sprite batches
         const grassBatch = new SpriteBatch(device, webgpu, {
@@ -38,35 +39,10 @@ async function init() {
             uniformBindGroupLayout: webgpu.getUniformBindGroup().layout,
             hasRotation: false,
         });
-        const treeBatch = new SpriteBatch(device, webgpu, {
-            spriteWidth: 480,
-            spriteHeight: 480,
-            sheetWidth: 1440,
-            sheetHeight: 480,
-            maxSprites: 5000,
-            vertexShaderCode: await fetch('js/shaders/vertex_tree.wgsl').then(r => r.text()),
-            fragmentShaderCode: await fetch('js/shaders/fragment.wgsl').then(r => r.text()),
-            textureData: treeTextureData,
-            uniformBindGroupLayout: webgpu.getUniformBindGroup().layout,
-            hasRotation: true,
-        });
 
-        // Load custom texture with target size
-        let customTexture = null;
-        try {
-            const textureData = await loadTexture(device, 'assets/hero.png', 112, 112);
-            customTexture = textureData.texture; // Extract GPUTexture
-            console.log('Custom texture loaded:', customTexture, {
-                width: customTexture.width,
-                height: customTexture.height
-            });
-        } catch (error) {
-            console.warn('Failed to load custom texture:', error);
-        }
-
-        // Initialize compute batch after loading custom texture
+        // Initialize compute batch with array of textures
         console.log("Initializing ComputeTextureBatch...");
-        const computeBatch = new ComputeTextureBatch(device, webgpu, 112, 112, 10000, customTexture);
+        const computeBatch = new ComputeTextureBatch(device, webgpu, 112, 112, 10000, [heroTextureData.texture, treeTextureData.texture]);
         await computeBatch.init();
         console.log('ComputeTextureBatch init completed, initialized:', computeBatch.isInitialized());
         if (!computeBatch.isInitialized()) {
@@ -84,7 +60,7 @@ async function init() {
         }
 
         // Create game instance with pre-loaded texture
-        const game = new Game([grassBatch, treeBatch], webgpu, mapData, computeBatch, customTexture);
+        const game = new Game([grassBatch], webgpu, mapData, computeBatch, heroTextureData);
 
         // FPS calculation variables
         let lastTime = performance.now();

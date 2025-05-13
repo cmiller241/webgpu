@@ -7,7 +7,7 @@ export class ComputeTextureBatch {
         this.maxInstances = maxInstances;
         this.initialized = false;
         this.initializationError = null;
-        this.providedTexture = texture; // Store provided texture (optional input texture)
+        this.providedTexture = texture[0]; // Store provided texture (optional input texture)
         this.currentComputeShaderCode = null;
 
         this.init().catch(error => {
