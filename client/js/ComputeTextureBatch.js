@@ -7,7 +7,7 @@ export class ComputeTextureBatch {
         this.maxInstances = maxInstances;
         this.initialized = false;
         this.initializationError = null;
-        this.providedTexture = texture[0]; // Store provided texture (optional input texture)
+        this.inputTexture = texture;
         this.currentComputeShaderCode = null;
 
         this.init().catch(error => {
@@ -58,12 +58,17 @@ export class ComputeTextureBatch {
                     {
                         binding: 2,
                         visibility: GPUShaderStage.COMPUTE,
-                        texture: { sampleType: 'float' }, // Input texture for reading
+                        texture: { sampleType: 'float' },
                     },
                     {
                         binding: 3,
                         visibility: GPUShaderStage.COMPUTE,
-                        sampler: {}, // Sampler for input texture
+                        sampler: {},
+                    },
+                    {
+                        binding: 4,
+                        visibility: GPUShaderStage.COMPUTE,
+                        buffer: { type: 'uniform' }, // For tile
                     },
                 ],
                 label: 'Compute Bind Group Layout',
@@ -95,7 +100,6 @@ export class ComputeTextureBatch {
             console.log('Updating compute shader...');
             this.currentComputeShaderCode = computeShaderCode;
             await this.setupComputePipeline(computeShaderCode);
-            // Recreate compute bind group to match new pipeline
             this.updateComputeBindGroup(this.texture, this.inputTexture);
             console.log('Compute shader updated successfully');
         } catch (error) {
@@ -184,7 +188,6 @@ export class ComputeTextureBatch {
 
     async setupResources() {
         try {
-            // Create output texture (for compute shader to write to)
             console.log('Creating compute output texture...');
             this.texture = this.device.createTexture({
                 size: [this.textureWidth, this.textureHeight],
@@ -193,36 +196,39 @@ export class ComputeTextureBatch {
                 label: 'Compute Output Texture',
             });
 
-            // Use provided texture if available, otherwise create a default input texture
-            console.log('Provided texture:', this.providedTexture);
-            if (this.providedTexture) {
-                this.inputTexture = this.providedTexture;
-                console.log('Using provided texture as input texture', {
-                    width: this.inputTexture.width,
-                    height: this.inputTexture.height
-                });
-            } else {
+            console.log('Input texture:', this.inputTexture);
+            if (!this.inputTexture) {
                 console.log('Creating default input texture...');
                 this.inputTexture = this.device.createTexture({
                     size: [this.textureWidth, this.textureHeight],
                     format: 'rgba8unorm',
-                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUBufferUsage.COPY_DST,
                     label: 'Default Input Texture',
                 });
-                // Initialize with a blank texture (white)
-                const blankData = new Uint8Array(this.textureWidth * this.textureHeight * 4).fill(255); // White texture
+                const blankData = new Uint8Array(this.textureWidth * this.textureHeight * 4).fill(255);
                 this.device.queue.writeTexture(
-                    { texture: this.inputTexture }, // destination
-                    blankData, // source
-                    { bytesPerRow: this.textureWidth * 4, rowsPerImage: this.textureHeight }, // dataLayout
-                    [this.textureWidth, this.textureHeight] // size
+                    { texture: this.inputTexture },
+                    blankData,
+                    { bytesPerRow: this.textureWidth * 4, rowsPerImage: this.textureHeight },
+                    [this.textureWidth, this.textureHeight]
                 );
+            } else {
+                console.log('Using provided input texture', {
+                    width: this.inputTexture.width,
+                    height: this.inputTexture.height
+                });
             }
 
             this.timeBuffer = this.device.createBuffer({
                 size: 4,
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
                 label: 'Time Uniform Buffer',
+            });
+
+            this.tileBuffer = this.device.createBuffer({
+                size: 4,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                label: 'Tile Uniform Buffer',
             });
 
             this.positionBuffer = this.device.createBuffer({
@@ -247,10 +253,11 @@ export class ComputeTextureBatch {
         this.computeBindGroup = this.device.createBindGroup({
             layout: this.computeBindGroupLayout,
             entries: [
-                { binding: 0, resource: outputTexture.createView() }, // Output storage texture
-                { binding: 1, resource: { buffer: this.timeBuffer } }, // Time uniform
-                { binding: 2, resource: inputTexture.createView() }, // Input texture
-                { binding: 3, resource: this.sampler }, // Sampler for input texture
+                { binding: 0, resource: outputTexture.createView() },
+                { binding: 1, resource: { buffer: this.timeBuffer } },
+                { binding: 2, resource: inputTexture.createView() },
+                { binding: 3, resource: this.sampler },
+                { binding: 4, resource: { buffer: this.tileBuffer } },
             ],
             label: 'Compute Bind Group',
         });
@@ -280,6 +287,18 @@ export class ComputeTextureBatch {
         this.device.queue.writeBuffer(this.timeBuffer, 0, new Float32Array([time / 1000]));
     }
 
+    updateTile(tile) {
+        if (!this.initialized || !this.tileBuffer) {
+            console.warn('ComputeTextureBatch not initialized or tileBuffer missing', {
+                initialized: this.initialized,
+                tileBuffer: this.tileBuffer,
+                initializationError: this.initializationError,
+            });
+            return;
+        }
+        this.device.queue.writeBuffer(this.tileBuffer, 0, new Int32Array([tile]));
+    }
+
     updatePositions(positions) {
         if (!this.positionBuffer) {
             console.warn('positionBuffer missing in updatePositions');
@@ -303,6 +322,8 @@ export class ComputeTextureBatch {
             positionData[i * 4 + 1] = 1 - (centerY / canvasHeight) * 2;
             positionData[i * 4 + 2] = positions[i].xSize / canvasWidth * 2;
             positionData[i * 4 + 3] = positions[i].ySize / canvasHeight * 2;
+            // Set tile uniform for this sprite
+            this.updateTile(positions[i].tile || 0);
         }
         this.device.queue.writeBuffer(this.positionBuffer, 0, positionData);
         return positions.length;
@@ -341,8 +362,7 @@ export class ComputeTextureBatch {
             return;
         }
 
-        // Use output texture (compute result) for rendering
-        const drawTexture = this.texture; // Always render the compute output
+        const drawTexture = this.texture;
         if (!drawTexture) {
             console.warn('No valid texture provided for draw');
             return;

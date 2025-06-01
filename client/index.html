@@ -6,7 +6,7 @@
             width: 100%;
             height: 100%;
             image-rendering: pixelated;
-            position: absolute; /* Ensure canvas is positioned */
+            position: absolute;
             top: 0;
             left: 0;
         }
@@ -17,16 +17,16 @@
             height: 100%;
         }
         #fpsDisplay {
-            position: absolute; /* Position above canvas */
-            top: 10px; /* 10px from top */
-            left: 10px; /* 10px from left */
-            z-index: 1000; /* Ensure it’s above canvas */
-            color: white; /* Text color for visibility */
-            background: rgba(0, 0, 0, 0.7); /* Semi-transparent black background */
-            padding: 5px 10px; /* Padding for readability */
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px 10px;
             font-family: Arial, sans-serif;
             font-size: 16px;
-            border-radius: 3px; /* Optional: rounded corners */
+            border-radius: 3px;
         }
     </style>
 </head>
@@ -34,11 +34,10 @@
     <canvas id="webgpuCanvas"></canvas>
     <div id="fpsDisplay">FPS: 0</div>
     <script>
-        // Set canvas size before WebGPU init
         const canvas = document.getElementById('webgpuCanvas');
         canvas.width = 32 * 10; // 320
         canvas.height = 32 * 10; // 320
     </script>
-    <script type="module" src="js/app.wgpu.js"></script>
+    <script type="module" src="js/main.js"></script>
 </body>
 </html>
