@@ -1,4 +1,3 @@
-// js/shaders/custom_compute.wgsl
 @group(0) @binding(0) var outputTexture : texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(1) var<uniform> time : f32;
 @group(0) @binding(2) var inputTexture : texture_2d<f32>;
@@ -6,7 +5,7 @@
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
-    // Use input texture dimensions (112x112)
+    // Use input texture dimensions (112x112 for heroes, 480x480 for trees)
     let dims = textureDimensions(inputTexture);
     let outputCoord = vec2<i32>(global_id.xy);
 
@@ -32,7 +31,8 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
     // Shadow calculation: Check if this transparent pixel is a shadow target
     let pixelX = f32(global_id.x);
     let pixelY = f32(global_id.y);
-    let baseY = 80.0; // Base of sprite (feet) at y = 80
+    // Select baseY: 80.0 for heroes (112x112), 250.0 for trees (480x480)
+    let baseY = select(245.0, 80.0, dims.x == 112);
 
     // Time-based angle (continuous 0° to 360° over 24 seconds)
     let theta = fract(time / 720.0) * 2.0 * 3.14159265359; // 0 to 2π
@@ -41,7 +41,8 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
 
     // Check pixels within max shadow distance
     let maxD = baseY; // Max source distance (y = 0 to baseY)
-    let maxShadowDist = 0.5 * maxD; // Halved distance
+    // Longer shadows for trees (0.75 * baseY), halved for heroes (0.5 * baseY)
+    let maxShadowDist = select(0.75 * maxD, 0.5 * maxD, dims.x == 112);
 
     // General case: project along (cosθ, sinθ)
     if (abs(sinTheta) >= 0.01) { // Skip shadows near 0° and 180°

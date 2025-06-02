@@ -1,313 +1,370 @@
-import { SpriteBatch } from './spriteBatch.js';
-
 export class WebGPULibrary {
     constructor(canvasId) {
-        this.canvas = document.getElementById(canvasId);
-        this.context = this.canvas.getContext('webgpu');
-        if (!this.context) throw new Error('WebGPU not supported');
+        this.canvasId = canvasId;
+        this.device = null;
+        this.context = null;
         this.scaleFactor = 1;
-        this.shaders = new Map();
-        this.spriteBatches = new Map();
-        this.uniformBuffers = new Map();
-        this.bindGroups = new Map();
         this.textures = new Map();
-        this.samplers = new Map();
-        this.textureCache = new Map();
-        this.startTime = performance.now() / 1000;
-        this.defaultVertexShader = `
-            struct VertexInput {
-                @location(0) position: vec2<f32>,
-                @location(1) uv: vec2<f32>,
-            };
-            struct VertexOutput {
-                @builtin(position) position: vec4<f32>,
-                @location(0) uv: vec2<f32>,
-            };
-            struct Uniforms {
-                resolution: vec2<f32>,
-            };
-            @group(0) @binding(0)
-            var<uniform> uniforms: Uniforms;
-
-            @vertex
-            fn main(input: VertexInput) -> VertexOutput {
-                var output: VertexOutput;
-                output.position = vec4<f32>(input.position, 0.0, 1.0);
-                output.uv = input.uv;
-                return output;
-            }
-        `;
+        this.shaders = new Map();
+        this.batches = new Map();
+        this.computePipelines = new Map();
+        this.uniformBuffers = new Map();
+        this.sampler = null;
     }
 
     async initialize() {
-        this.adapter = await navigator.gpu.requestAdapter();
-        this.device = await this.adapter.requestDevice();
-        this.format = navigator.gpu.getPreferredCanvasFormat();
+        if (!navigator.gpu) throw new Error('WebGPU not supported');
 
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) throw new Error('No WebGPU adapter found');
+
+        this.device = await adapter.requestDevice();
+        const canvas = document.getElementById(this.canvasId);
+        if (!canvas) throw new Error(`Canvas with ID "${this.canvasId}" not found`);
+
+        this.context = canvas.getContext('webgpu');
+        if (!this.context) throw new Error('Failed to get WebGPU context.');
+
+        this.resizeCanvas();
         this.context.configure({
             device: this.device,
-            format: this.format,
+            format: navigator.gpu.getPreferredCanvasFormat(),
             alphaMode: 'premultiplied',
         });
 
-        this.uniformBindGroupLayout = this.device.createBindGroupLayout({
-            entries: [
-                { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-            ],
-            label: 'Uniform Bind Group Layout',
+        this.sampler = this.device.createSampler({
+            magFilter: 'nearest',
+            minFilter: 'nearest'
         });
 
-        this.resizeCanvas();
         return this;
     }
 
     resizeCanvas() {
-        this.canvas.width = window.innerWidth / this.scaleFactor;
-        this.canvas.height = window.innerHeight / this.scaleFactor;
-        this.canvas.style.width = `${window.innerWidth}px`;
-        this.canvas.style.height = `${window.innerHeight}px`;
+        if (!this.context) {
+            throw new Error('WebGPU context not initialized. Call initialize() first.');
+        }
+        const canvas = this.context.canvas;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.min(window.innerWidth * dpr * this.scaleFactor, 1280);
+        canvas.height = Math.min(window.innerHeight * dpr * this.scaleFactor, 720);
+        console.log('Canvas resized:', canvas.width, canvas.height);
     }
 
-    setScaleFactor(newScaleFactor) {
-        this.scaleFactor = newScaleFactor;
+    setScaleFactor(scale) {
+        this.scaleFactor = scale;
         this.resizeCanvas();
+        return this;
     }
 
-    createStorageTexture(width, height, format = 'rgba8unorm') {
-        const texture = this.device.createTexture({
-            size: [width, height],
-            format,
-            usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-            label: `Storage Texture ${width}x${height}`,
-        });
-        const textureId = `texture_${this.textures.size}`;
-        this.textures.set(textureId, { texture, width, height, format });
-        return textureId;
-    }
-
-    async loadTexture(url, textureId, width = null, height = null) {
-        if (this.textureCache.has(url)) {
-            const cached = this.textureCache.get(url);
-            this.textures.set(textureId, { texture: cached.texture, width: cached.width, height: cached.height, format: 'rgba8unorm' });
-            this.samplers.set(textureId, cached.sampler);
-            return { textureId, width: cached.width, height: cached.height };
-        }
-
+    async loadTexture(url, name, width, height) {
         const response = await fetch(url);
-        const imageBitmap = await createImageBitmap(await response.blob());
-        const textureWidth = width || imageBitmap.width;
-        const textureHeight = height || imageBitmap.height;
+        const blob = await response.blob();
+        const bitmap = await createImageBitmap(blob);
 
-        if (textureWidth > imageBitmap.width || textureHeight > imageBitmap.height) {
-            throw new Error(`Requested dimensions (${textureWidth}x${textureHeight}) exceed image bounds (${imageBitmap.width}x${imageBitmap.height})`);
-        }
+        const actualWidth = width || bitmap.width;
+        const actualHeight = height || bitmap.height;
+        console.log(`Loading texture ${name}: ${actualWidth}x${actualHeight}`);
 
         const texture = this.device.createTexture({
-            size: [textureWidth, textureHeight],
+            size: [actualWidth, actualHeight, 1],
             format: 'rgba8unorm',
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-            label: `Texture ${textureId}`,
         });
 
         this.device.queue.copyExternalImageToTexture(
-            { source: imageBitmap },
-            { texture },
-            [textureWidth, textureHeight]
+            { source: bitmap },
+            { texture: texture },
+            [actualWidth, actualHeight]
         );
 
-        const sampler = this.device.createSampler({
-            magFilter: 'nearest',
-            minFilter: 'nearest',
-            label: `Sampler ${textureId}`,
-        });
-
-        this.textures.set(textureId, { texture, width: textureWidth, height: textureHeight, format: 'rgba8unorm' });
-        this.samplers.set(textureId, sampler);
-        this.textureCache.set(url, { texture, sampler, width: textureWidth, height: textureHeight });
-
-        return { textureId, width: textureWidth, height: textureHeight };
+        const textureId = name;
+        this.textures.set(textureId, { texture, width: actualWidth, height: actualHeight });
+        return { textureId, width: actualWidth, height: actualHeight };
     }
 
-    newShader(code, type, label = `Shader ${type}`) {
-        const shaderModule = this.device.createShaderModule({ code, label });
-        const shaderId = `shader_${this.shaders.size}`;
-        this.shaders.set(shaderId, { module: shaderModule, type, code });
+    newShader(code, type) {
+        const shaderModule = this.device.createShaderModule({ code });
+        const shaderId = `${type}_${this.shaders.size}`;
+        this.shaders.set(shaderId, { module: shaderModule, type });
         return shaderId;
     }
 
-    setShader(shaderId) {
-        const shader = this.shaders.get(shaderId);
-        if (!shader) throw new Error(`Shader ${shaderId} not found`);
-        this.currentShader = shader;
-    }
-
-    send(uniformName, data, type) {
-        if (!this.uniformBuffers.has(uniformName)) {
-            const size = this.getUniformSize(type, data.length);
-            const buffer = this.device.createBuffer({
-                size,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-                label: `Uniform Buffer ${uniformName}`,
-            });
-            this.uniformBuffers.set(uniformName, { buffer, type, size });
-
-            const bindGroup = this.device.createBindGroup({
-                layout: this.uniformBindGroupLayout,
-                entries: [{ binding: 0, resource: { buffer } }],
-                label: `Uniform Bind Group ${uniformName}`,
-            });
-            this.bindGroups.set(uniformName, bindGroup);
-        }
-
-        const bufferData = this.createBufferData(type, data);
-        const buffer = this.uniformBuffers.get(uniformName).buffer;
-        this.device.queue.writeBuffer(buffer, 0, bufferData);
-    }
-
-    getUniformSize(type, length) {
-        switch (type) {
-            case 'float': return 4 * length;
-            case 'vec2<f32>': return 8 * Math.ceil(length / 2);
-            case 'vec3<f32>': return 12 * Math.ceil(length / 3);
-            case 'vec4<f32>': return 16 * Math.ceil(length / 4);
-            default: throw new Error(`Unsupported uniform type: ${type}`);
-        }
-    }
-
-    createBufferData(type, data) {
-        switch (type) {
-            case 'float':
-            case 'vec2<f32>':
-            case 'vec3<f32>':
-            case 'vec4<f32>':
-                return new Float32Array(data);
-            default:
-                throw new Error(`Unsupported uniform type: ${type}`);
-        }
-    }
-
-    newSpriteBatch(maxSprites, vertexShaderId, fragmentShaderId, textureId, hasRotation = false) {
-        const vertexShader = this.shaders.get(vertexShaderId) || { module: this.device.createShaderModule({ code: this.defaultVertexShader }), code: this.defaultVertexShader };
-        const fragmentShader = this.shaders.get(fragmentShaderId);
-        const textureData = this.textures.get(textureId);
-        const sampler = this.samplers.get(textureId);
-
-        if (!vertexShader || !fragmentShader || !textureData || !sampler) {
-            throw new Error('Invalid shader or texture for sprite batch');
-        }
-
-        const batch = new SpriteBatch(this.device, this, {
-            spriteWidth: textureId === 'grass' ? 32 : 480,
-            spriteHeight: textureId === 'grass' ? 32 : 480,
-            sheetWidth: textureId === 'grass' ? 1024 : 1440,
-            sheetHeight: textureId === 'grass' ? 1024 : 480,
-            maxSprites,
-            vertexShaderCode: vertexShader.code,
-            fragmentShaderCode: fragmentShader.code,
-            textureData: { texture: textureData.texture, sampler },
-            uniformBindGroupLayout: this.uniformBindGroupLayout,
-            hasRotation,
+    newSpriteBatch(maxSprites, vertexShaderId, fragmentShaderId, textureId, isCompute = false) {
+        const vertexBuffer = this.device.createBuffer({
+            size: maxSprites * 4 * 16, // 4 vertices, 4 floats (16 bytes each)
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
         });
 
-        const batchId = `batch_${this.spriteBatches.size}`;
-        this.spriteBatches.set(batchId, batch);
+        const indexBuffer = this.device.createBuffer({
+            size: maxSprites * 6 * 4, // 6 indices per quad, 4 bytes each
+            usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+        });
+
+        const uniformBuffer = this.device.createBuffer({
+            size: 8, // resolution: vec2<f32>
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        this.device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([this.context.canvas.width, this.context.canvas.height]));
+
+        const vertexShader = this.shaders.get(vertexShaderId);
+        const fragmentShader = this.shaders.get(fragmentShaderId);
+        if (!vertexShader || !fragmentShader) {
+            throw new Error(`Shader not found: vertex=${vertexShaderId}, fragment=${fragmentShaderId}`);
+        }
+
+        const texture = this.textures.get(textureId).texture;
+
+        const pipeline = this.device.createRenderPipeline({
+            layout: this.device.createPipelineLayout({
+                bindGroupLayouts: [this.device.createBindGroupLayout({
+                    entries: [
+                        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+                        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+                        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: {} },
+                    ],
+                })],
+            }),
+            vertex: {
+                module: vertexShader.module,
+                entryPoint: 'main',
+                buffers: [{
+                    arrayStride: 16, // 4 floats
+                    attributes: [
+                        { shaderLocation: 0, offset: 0, format: 'float32x2' },
+                        { shaderLocation: 1, offset: 8, format: 'float32x2' },
+                    ],
+                }],
+            },
+            fragment: {
+                module: fragmentShader.module,
+                entryPoint: 'main',
+                targets: [{
+                    format: navigator.gpu.getPreferredCanvasFormat(),
+                    blend: {
+                        color: {
+                            srcFactor: 'src-alpha',
+                            dstFactor: 'one-minus-src-alpha',
+                            operation: 'add'
+                        },
+                        alpha: {
+                            srcFactor: 'src-alpha',
+                            dstFactor: 'one-minus-src-alpha',
+                            operation: 'add'
+                        }
+                    }
+                }],
+            },
+            primitive: { topology: 'triangle-list' },
+        });
+
+        const bindGroup = this.device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: texture.createView() },
+                { binding: 1, resource: this.sampler },
+                { binding: 2, resource: { buffer: uniformBuffer } },
+            ],
+        });
+
+        const batchId = `batch_${this.batches.size}`;
+        this.batches.set(batchId, {
+            vertexBuffer,
+            indexBuffer,
+            uniformBuffer,
+            pipeline,
+            bindGroup,
+            maxSprites,
+            spriteCount: 0,
+            textureId,
+            isCompute,
+        });
+
+        this.uniformBuffers.set(batchId, uniformBuffer);
         return batchId;
     }
 
-    setSpriteBatchData(batchId, spriteData) {
-        const batch = this.spriteBatches.get(batchId);
-        if (!batch) throw new Error(`Sprite batch ${batchId} not found`);
-        batch.setSpriteData(spriteData);
+    async setupComputePipeline(textureId, computeShaderId, width, height, maxSprites) {
+        const textureInfo = this.textures.get(textureId);
+        const computeShader = this.shaders.get(computeShaderId);
+
+        console.log(`Setting up compute pipeline for ${textureId}: ${width}x${height}`);
+
+        const outputTexture = this.device.createTexture({
+            size: [width, height, 1],
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+        });
+
+        const timeBuffer = this.device.createBuffer({
+            size: 4,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        const pipeline = this.device.createComputePipeline({
+            layout: this.device.createPipelineLayout({
+                bindGroupLayouts: [this.device.createBindGroupLayout({
+                    entries: [
+                        { binding: 0, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba8unorm' } },
+                        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: {} },
+                        { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
+                        { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: {} },
+                    ],
+                })],
+            }),
+            compute: {
+                module: computeShader.module,
+                entryPoint: 'main',
+            },
+        });
+
+        const bindGroup = this.device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: outputTexture.createView() },
+                { binding: 1, resource: { buffer: timeBuffer } },
+                { binding: 2, resource: textureInfo.texture.createView() },
+                { binding: 3, resource: this.sampler },
+            ],
+        });
+
+        const computeBatchId = `compute_${textureId}`;
+        this.computePipelines.set(computeBatchId, {
+            pipeline,
+            bindGroup,
+            outputTexture,
+            timeBuffer,
+            width,
+            height,
+            maxSprites,
+        });
+
+        this.textures.set(computeBatchId, { texture: outputTexture, width, height });
+        return computeBatchId;
     }
 
-    draw(batchIds, computeBatches = null, allSprites = null, textureIds = null) {
-        const commandEncoder = this.device.createCommandEncoder();
-        const textureView = this.context.getCurrentTexture().createView();
-
-        if (computeBatches) {
-            const computePass = commandEncoder.beginComputePass();
-            if (computeBatches.hero) computeBatches.hero.dispatch(computePass);
-            if (computeBatches.tree) computeBatches.tree.dispatch(computePass);
-            computePass.end();
+    async drawComputes(sprites, time, vertexShaderId, fragmentShaderId) {
+        if (sprites.length === 0 || !this.context) {
+            console.warn('No sprites or context lost');
+            return;
         }
 
+        const commandEncoder = this.device.createCommandEncoder();
+
+        // Group sprites by texture, preserving y-sort order
+        const batches = [];
+        let currentTexture = sprites[0].texture;
+        let currentBatch = { textureId: currentTexture, sprites: [] };
+        for (const sprite of sprites) {
+            if (sprite.texture !== currentTexture) {
+                batches.push(currentBatch);
+                currentTexture = sprite.texture;
+                currentBatch = { textureId: currentTexture, sprites: [] };
+            }
+            currentBatch.sprites.push(sprite);
+        }
+        batches.push(currentBatch);
+
+        // Compute passes (one per sprite to avoid clipping)
+        for (const batch of batches) {
+            const computeBatchId = `compute_${batch.textureId}`;
+            const computeBatch = this.computePipelines.get(computeBatchId);
+            if (computeBatch) {
+                console.log(`Processing compute batch: ${computeBatchId}, sprites: ${batch.sprites.length}`);
+                this.device.queue.writeBuffer(computeBatch.timeBuffer, 0, new Float32Array([time]));
+                for (const sprite of batch.sprites) {
+                    const computePass = commandEncoder.beginComputePass();
+                    computePass.setPipeline(computeBatch.pipeline);
+                    computePass.setBindGroup(0, computeBatch.bindGroup);
+                    computePass.dispatchWorkgroups(
+                        Math.ceil(computeBatch.width / 8),
+                        Math.ceil(computeBatch.height / 8)
+                    );
+                    computePass.end();
+                }
+            }
+        }
+
+        // Render passes
+        const textureView = this.context.getCurrentTexture().createView();
         const renderPass = commandEncoder.beginRenderPass({
             colorAttachments: [{
                 view: textureView,
+                clearValue: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
                 loadOp: 'clear',
                 storeOp: 'store',
-                clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
             }],
         });
 
-        if (batchIds) {
-            const ids = Array.isArray(batchIds) ? batchIds : [batchIds];
-            for (const batchId of ids) {
-                const batch = this.spriteBatches.get(batchId);
-                if (batch) {
-                    console.log(`Drawing SpriteBatch: ${batchId}`);
-                    batch.draw(renderPass);
-                }
-            }
-        }
+        const batchIdsToClean = [];
+        for (const batch of batches) {
+            const computeBatchId = `compute_${batch.textureId}`;
+            const computeBatch = this.computePipelines.get(computeBatchId);
+            if (computeBatch) {
+                console.log(`Rendering batch: ${computeBatchId}, sprites: ${batch.sprites.length}`);
+                const vertices = new Float32Array(batch.sprites.length * 4 * 4);
+                const indices = new Uint32Array(batch.sprites.length * 6);
 
-        if (computeBatches && allSprites && textureIds) {
-            let currentBatch = null;
-            let currentGroup = [];
-            let drawCount = 0;
-            let processedSprites = 0;
+                for (let i = 0; i < batch.sprites.length; i++) {
+                    const sprite = batch.sprites[i];
+                    const x = sprite.x;
+                    const y = sprite.y;
+                    const w = sprite.xSize;
+                    const h = sprite.ySize;
 
-            console.log(`Processing ${allSprites.length} sprites`);
+                    const baseVertex = i * 4;
+                    vertices.set([
+                        x, y, 0, 0,
+                        x + w, y, 1, 0,
+                        x + w, y + h, 1, 1,
+                        x, y + h, 0, 1,
+                    ], baseVertex * 4);
 
-            for (const sprite of allSprites) {
-                const batch = sprite.texture === textureIds.heroTextureId ? computeBatches.hero : computeBatches.tree;
-                if (!batch) {
-                    console.warn('No batch for sprite:', { y: sprite.y, x: sprite.x, texture: sprite.texture, tile: sprite.tile, xSize: sprite.xSize, ySize: sprite.ySize, index: sprite.index });
-                    continue;
-                }
-
-                processedSprites++;
-                console.log(`Processing sprite ${processedSprites}:`, { y: sprite.y, x: sprite.x, texture: sprite.texture, tile: sprite.tile, xSize: sprite.xSize, ySize: sprite.ySize, index: sprite.index });
-
-                if (batch !== currentBatch && currentGroup.length > 0) {
-                    console.log(`Drawing batch ${currentBatch === computeBatches.hero ? 'hero' : 'tree'} with ${currentGroup.length} sprites`, currentGroup.map(s => ({ y: s.y, x: s.x, texture: s.texture, tile: s.tile, index: s.index })));
-                    currentBatch.draw(renderPass, currentGroup);
-                    drawCount++;
-                    currentGroup = [];
+                    indices.set([
+                        baseVertex, baseVertex + 1, baseVertex + 2,
+                        baseVertex, baseVertex + 2, baseVertex + 3,
+                    ], i * 6);
                 }
 
-                currentBatch = batch;
-                currentGroup.push(sprite);
-            }
+                const tempBatchId = this.newSpriteBatch(batch.sprites.length, vertexShaderId, fragmentShaderId, computeBatchId);
+                const tempBatch = this.batches.get(tempBatchId);
 
-            if (currentGroup.length > 0 && currentBatch) {
-                console.log(`Drawing final batch ${currentBatch === computeBatches.hero ? 'hero' : 'tree'} with ${currentGroup.length} sprites`, currentGroup.map(s => ({ y: s.y, x: s.x, texture: s.texture, tile: s.tile, index: s.index })));
-                currentBatch.draw(renderPass, currentGroup);
-                drawCount++;
-            }
+                this.device.queue.writeBuffer(tempBatch.vertexBuffer, 0, vertices);
+                this.device.queue.writeBuffer(tempBatch.indexBuffer, 0, indices);
+                tempBatch.spriteCount = batch.sprites.length;
 
-            console.log(`Total sprites processed: ${processedSprites}, Total draw calls: ${drawCount}`);
-        } else {
-            console.warn('Missing computeBatches, allSprites, or textureIds:', { computeBatches, allSprites, textureIds });
+                renderPass.setPipeline(tempBatch.pipeline);
+                renderPass.setBindGroup(0, tempBatch.bindGroup);
+                renderPass.setVertexBuffer(0, tempBatch.vertexBuffer);
+                renderPass.setIndexBuffer(tempBatch.indexBuffer, 'uint32');
+                renderPass.drawIndexed(tempBatch.spriteCount * 6);
+
+                batchIdsToClean.push(tempBatchId);
+            }
         }
 
         renderPass.end();
         this.device.queue.submit([commandEncoder.finish()]);
-    }
 
-    getDevice() {
-        return this.device;
+        // Cleanup after submission
+        for (const batchId of batchIdsToClean) {
+            const batch = this.batches.get(batchId);
+            if (batch) {
+                batch.vertexBuffer.destroy();
+                batch.indexBuffer.destroy();
+                batch.uniformBuffer.destroy();
+                this.batches.delete(batchId);
+                this.uniformBuffers.delete(batchId);
+            }
+        }
     }
 
     getContext() {
         return this.context;
     }
 
-    getFormat() {
-        return this.format;
-    }
-
-    getUniformBindGroupLayout() {
-        return this.uniformBindGroupLayout;
+    getDevice() {
+        return this.device;
     }
 }

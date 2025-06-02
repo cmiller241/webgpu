@@ -37,7 +37,14 @@
         const canvas = document.getElementById('webgpuCanvas');
         canvas.width = 32 * 10; // 320
         canvas.height = 32 * 10; // 320
+        console.log('Navigator.gpu:', !!navigator.gpu);
+        console.log('WebGPU context:', !!canvas.getContext('webgpu'));
     </script>
-    <script type="module" src="js/main.js"></script>
+    <script type="module">
+        import { main } from './js/main.js';
+        document.addEventListener('DOMContentLoaded', () => {
+            main();
+        });
+    </script>
 </body>
 </html>
